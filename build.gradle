@@ -30,9 +30,9 @@ import org.opensearch.gradle.test.RestIntegTestTask
 buildscript {
     ext {
         opensearch_group = "org.opensearch"
-        opensearch_version = System.getProperty("opensearch.version", "1.0.0-rc1")
-        common_utils_version = '1.0.0.0-rc1'
-        job_scheduler_version = '1.0.0.0-rc1'
+        opensearch_version = System.getProperty("opensearch.version", "1.0.0")
+        common_utils_version = '1.0.0.0'
+        job_scheduler_version = '1.0.0.0'
     }
 
     repositories {
@@ -66,7 +66,11 @@ ext {
     isSnapshot = "true" == System.getProperty("build.snapshot", "true")
 }
 
+<<<<<<< HEAD
 version = "${opensearchVersion}.0-rc1"
+=======
+version = "${opensearchVersion}.0"
+>>>>>>> f7e34e591c5269557cc2d49dedf5715848610898
 
 apply plugin: 'java'
 apply plugin: 'idea'

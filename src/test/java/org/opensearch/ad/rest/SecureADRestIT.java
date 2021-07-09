@@ -35,6 +35,7 @@ import org.apache.http.HttpHost;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.opensearch.ad.AnomalyDetectorRestTestCase;
 import org.opensearch.ad.model.AnomalyDetector;
 import org.opensearch.ad.model.AnomalyDetectorExecutionInput;
@@ -52,6 +53,8 @@ public class SecureADRestIT extends AnomalyDetectorRestTestCase {
     RestClient catClient;
     String dogUser = "dog";
     RestClient dogClient;
+    String elkUser = "elk";
+    RestClient elkClient;
 
     @Before
     public void setupSecureTests() throws IOException {
@@ -78,8 +81,13 @@ public class SecureADRestIT extends AnomalyDetectorRestTestCase {
             .setSocketTimeout(60000)
             .build();
 
+        createUser(elkUser, elkUser, new ArrayList<>(Arrays.asList("odfe")));
+        elkClient = new SecureRestClientBuilder(getClusterHosts().toArray(new HttpHost[0]), isHttps(), elkUser, elkUser)
+            .setSocketTimeout(60000)
+            .build();
+
         createRoleMapping("anomaly_read_access", new ArrayList<>(Arrays.asList(bobUser)));
-        createRoleMapping("anomaly_full_access", new ArrayList<>(Arrays.asList(aliceUser, catUser, dogUser)));
+        createRoleMapping("anomaly_full_access", new ArrayList<>(Arrays.asList(aliceUser, catUser, dogUser, elkUser)));
         createRoleMapping("index_all_access", new ArrayList<>(Arrays.asList(aliceUser, bobUser, catUser, dogUser)));
     }
 
@@ -89,10 +97,12 @@ public class SecureADRestIT extends AnomalyDetectorRestTestCase {
         bobClient.close();
         catClient.close();
         dogClient.close();
+        elkClient.close();
         deleteUser(aliceUser);
         deleteUser(bobUser);
         deleteUser(catUser);
         deleteUser(dogUser);
+        deleteUser(elkUser);
     }
 
     public void testCreateAnomalyDetectorWithWriteAccess() throws IOException {
@@ -194,6 +204,16 @@ public class SecureADRestIT extends AnomalyDetectorRestTestCase {
             );
     }
 
+    public void testCreateAnomalyDetectorWithNoReadPermissionOfIndex() throws IOException {
+        enableFilterBy();
+        // User alice has AD full access and index permission, so can create detector
+        AnomalyDetector anomalyDetector = createRandomAnomalyDetector(false, false, aliceClient);
+        // User elk has AD full access, but has no read permission of index
+        String indexName = anomalyDetector.getIndices().get(0);
+        Exception exception = expectThrows(IOException.class, () -> { createRandomAnomalyDetector(false, false, indexName, elkClient); });
+        Assert.assertTrue(exception.getMessage().contains("no permissions for [indices:data/read/search]"));
+    }
+
     public void testPreviewAnomalyDetectorWithWriteAccess() throws IOException {
         // User Alice has AD full access, should be able to create/preview a detector
         AnomalyDetector aliceDetector = createRandomAnomalyDetector(false, false, aliceClient);
@@ -244,5 +264,25 @@ public class SecureADRestIT extends AnomalyDetectorRestTestCase {
             .assertTrue(
                 exception.getMessage().contains("User does not have permissions to access detector: " + aliceDetector.getDetectorId())
             );
+    }
+
+    // TODO: enable this test case when we have latest docker image
+    @Ignore
+    public void testPreviewAnomalyDetectorWithNoReadPermissionOfIndex() throws IOException {
+        // User Alice has AD full access, should be able to create a detector
+        AnomalyDetector aliceDetector = createRandomAnomalyDetector(false, false, aliceClient);
+        AnomalyDetectorExecutionInput input = new AnomalyDetectorExecutionInput(
+            aliceDetector.getDetectorId(),
+            Instant.now().minusSeconds(60 * 10),
+            Instant.now(),
+            aliceDetector
+        );
+        enableFilterBy();
+        // User elk has no read permission of index
+        Exception exception = expectThrows(
+            Exception.class,
+            () -> { previewAnomalyDetector(aliceDetector.getDetectorId(), elkClient, input); }
+        );
+        Assert.assertTrue(exception.getMessage().contains("no permissions for [indices:data/read/search]"));
     }
 }

@@ -33,37 +33,37 @@ jobs:
         with:
           repository: 'opensearch-project/OpenSearch'
           path: OpenSearch
-          ref: '1.x'
+          ref: '1.0'
       - name: Build OpenSearch
         working-directory: ./OpenSearch
-        run: ./gradlew publishToMavenLocal -Dbuild.version_qualifier=rc1 -Dbuild.snapshot=false
+        run: ./gradlew publishToMavenLocal -Dbuild.snapshot=false
 
       # dependencies: common-utils
       - name: Checkout common-utils
         uses: actions/checkout@v2
         with:
-          ref: 'main' # TODO: update to the right branch name once it's ready. e.g. 1.x
+          ref: '1.0'
           repository: 'opensearch-project/common-utils'
           path: common-utils
       - name: Build common-utils
         working-directory: ./common-utils
-        run: ./gradlew publishToMavenLocal -Dopensearch.version=1.0.0-rc1
+        run: ./gradlew publishToMavenLocal -Dopensearch.version=1.0.0
 
       # dependencies: job-scheduler
       - name: Checkout job-scheduler
         uses: actions/checkout@v2
         with:
-          ref: 'main' # TODO: update to the right branch name once it's ready. e.g. 1.x
+          ref: '1.0'
           repository: 'opensearch-project/job-scheduler'
           path: job-scheduler
 
       - name: Build job-scheduler
         working-directory: ./job-scheduler
-        run: ./gradlew publishToMavenLocal -Dopensearch.version=1.0.0-rc1 -Dbuild.snapshot=false
+        run: ./gradlew publishToMavenLocal -Dopensearch.version=1.0.0 -Dbuild.snapshot=false
       - name: Assemble job-scheduler
         working-directory: ./job-scheduler
         run: |
-          ./gradlew assemble -Dopensearch.version=1.0.0-rc1 -Dbuild.snapshot=false
+          ./gradlew assemble -Dopensearch.version=1.0.0 -Dbuild.snapshot=false
           echo "Creating ../src/test/resources/job-scheduler ..."
           mkdir -p ../src/test/resources/job-scheduler
           pwd
@@ -75,11 +75,57 @@ jobs:
 
       - name: Build and Run Tests
         run: |
-          ./gradlew build -Dopensearch.version=1.0.0-rc1
+          ./gradlew build -Dopensearch.version=1.0.0
 
       - name: Publish to Maven Local
         run: |
-          ./gradlew publishToMavenLocal -Dopensearch.version=1.0.0-rc1
+          ./gradlew publishToMavenLocal -Dopensearch.version=1.0.0
+
+      - name: Multi Nodes Integration Testing
+        run: |
+          ./gradlew integTest  -PnumNodes=3
+
+      - name: Pull and Run Docker
+        run: |
+          ## plugin=`ls build/distributions/*.zip`
+          ## version=`echo $plugin|awk -F- '{print $4}'| cut -d. -f 1-3`
+          ## plugin_version=`echo $plugin|awk -F- '{print $4}'| cut -d. -f 1-4`
+          ## TODO: remove these two hard code versions below after GA release
+          version=1.0.0
+          plugin_version=1.0.0.0
+          echo $version
+          cd ..
+          if docker pull opensearchstaging/opensearch:$version
+          then
+            echo "FROM opensearchstaging/opensearch:$version" >> Dockerfile
+            echo "RUN if [ -d /usr/share/opensearch/plugins/opensearch-anomaly-detection ]; then /usr/share/opensearch/bin/opensearch-plugin remove opensearch-anomaly-detection; fi" >> Dockerfile
+            echo "ADD anomaly-detection/build/distributions/opensearch-anomaly-detection-$plugin_version.zip /tmp/" >> Dockerfile
+            echo "RUN /usr/share/opensearch/bin/opensearch-plugin install --batch file:/tmp/opensearch-anomaly-detection-$plugin_version.zip" >> Dockerfile
+            docker build -t opensearch-ad:test .
+            echo "imagePresent=true" >> $GITHUB_ENV
+          else
+            echo "imagePresent=false" >> $GITHUB_ENV
+          fi
+
+      - name: Run Docker Image
+        if: env.imagePresent == 'true'
+        run: |
+          cd ..
+          docker run -p 9200:9200 -d -p 9600:9600 -e "discovery.type=single-node" opensearch-ad:test
+          sleep 90
+
+      - name: Run AD Test
+        if: env.imagePresent == 'true'
+        run: |
+          security=`curl -XGET https://localhost:9200/_cat/plugins?v -u admin:admin --insecure |grep opensearch-security|wc -l`
+          if [ $security -gt 0 ]
+          then
+            echo "Security plugin is available"
+            ./gradlew integTest -Dtests.rest.cluster=localhost:9200 -Dtests.cluster=localhost:9200 -Dtests.clustername="docker-cluster" -Dhttps=true -Duser=admin -Dpassword=admin
+          else
+            echo "Security plugin is NOT available"
+            ./gradlew integTest -Dtests.rest.cluster=localhost:9200 -Dtests.cluster=localhost:9200 -Dtests.clustername="docker-cluster"
+          fi
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v1
